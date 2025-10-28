@@ -1,127 +1,222 @@
-# --- imports ---
-import ipeadatapy as ipea
-import pandas as pd
-import matplotlib.pyplot as plt
-import streamlit as st
-from datetime import datetime
+# -*- coding: utf-8 -*-
+# Dashboard de índices econômicos brasileiros
+# Autor: Lucas Magalhães
 
-# --- Premissas para correção monetária (simplificadas) ---
-conversoes_monetarias = {
-    datetime(1970, 1, 1): ('Cruzeiro (Cr$)', 1 / (1000**3 * 2750), 1000**3 * 2750),
-    datetime(1986, 3, 1): ('Cruzado (Cz$)', 1 / (1000**2 * 2750), 1000**2 * 2750),
-    datetime(1989, 2, 1): ('Cruzado Novo (NCz$)', 1 / (1000 * 2750), 1000 * 2750),
-    datetime(1990, 4, 1): ('Cruzeiro (Cr$)', 1 / (1000 * 2750), 1000 * 2750),
-    datetime(1993, 8, 1): ('Cruzeiro Real (CR$)', 1 / 2750, 2750),
-    datetime(1994, 7, 1): ('Real (R$)', 1, 1),
+import streamlit as st
+import pandas as pd
+import altair as alt
+import ipeadatapy as ipea
+
+# Configuração da página
+st.set_page_config(
+    page_title="Dashboard de Índices Econômicos",
+    page_icon=":bar_chart:",
+    layout="wide",
+)
+
+"""
+# :bar_chart: Dashboard de Índices Econômicos Brasileiros
+
+Compare a evolução de diferentes índices de inflação, juros e preços ao longo do tempo.
+"""
+
+# --- Dicionário de índices disponíveis ---
+indices = {
+    "IPCA": "PRECOS12_IPCAG12",
+    "IGP-M": "IGP12_IGPMG12",
+    "INPC": "PRECOS12_INPCBR12",
+    "SELIC (Over)": "BM12_TJOVER12",
+    "IPC-FIPE": "FIPE12_FIPE0001",
+    "IGP-DI": "IGP12_IGPDIG12",
 }
 
+DEFAULT_INDICES = ["IPCA", "IGP-M", "INPC"]
 
-def obter_conversoes(data):
-    """Retorna o nome da moeda e os fatores de conversão para a data."""
-    for data_corte, conversoes in sorted(conversoes_monetarias.items()):
-        if data < data_corte:
-            return conversoes
-    return conversoes_monetarias[datetime(1994, 7, 1)]
-
-
-# --- funções para correção monetária ---
-def inflacao(periodo, st_write_func):
-    """Calcula o fator de inflação acumulado."""
-    fator = 1.0
-    for data, variacao in periodo.items():
-        fator *= (1 + variacao / 100)
-        st_write_func(
-            f"{data.strftime('%m-%Y')}: "
-            f"variação = {variacao:.4f}%   |   fator acumulado = {fator:.6f}"
-        )
-    return fator
-
-
-def deflacao(periodo, valor_data_inicial, st_write_func):
-    """Calcula o fator de deflação acumulado."""
-    fator = 1.0
-    for data, variacao in periodo.items():
-        fator /= (1 + variacao / 100)
-        st_write_func(
-            f"{data.strftime('%m-%Y')}: "
-            f"variação = {variacao:.4f}%   |   fator deflacionado = {fator:.6f}"
-        )
-    return fator
-
-
-def parse_data(user_input):
-    """Converte a string de data para objeto datetime."""
-    for fmt in ("%Y-%m", "%m-%Y"):
+# --- Função para carregar séries ---
+@st.cache_data(show_spinner=True)
+def carregar_series(indices):
+    dados = {}
+    for nome, codigo in indices.items():
         try:
-            return datetime.strptime(user_input, fmt)
-        except ValueError:
-            pass
-    raise ValueError("Formato inválido. Use AAAA-MM ou MM-AAAA.")
+            serie = ipea.timeseries(codigo)
+            serie = serie.rename(columns={"VALUE ((% a.m.))": "valor"})
+            serie = serie[["valor"]].dropna()
+            dados[nome] = serie
+        except Exception as e:
+            st.warning(f"Erro ao carregar {nome}: {e}")
+    return dados
 
+dados_indices = carregar_series(indices)
 
-# --- Layout do Streamlit ---
-st.title("Calculadora de Correção Monetária")
+# --- Seletor de índices ---
+indices_escolhidos = st.multiselect(
+    "Escolha os índices para comparar:",
+    options=list(indices.keys()),
+    default=DEFAULT_INDICES,
+)
 
-# Widgets para entrada de dados do usuário
-data_inicial_str = st.text_input("Data inicial (AAAA-MM ou MM-AAAA):", "1980-01")
-data_final_str = st.text_input("Data final (AAAA-MM ou MM-AAAA):", "2025-08")
-valor = st.number_input("Valor a ser corrigido:", value=100.0)
+if not indices_escolhidos:
+    st.info("Selecione ao menos um índice para continuar.")
+    st.stop()
 
-# Botão para executar o cálculo
-if st.button("Calcular"):
+# --- Filtro de datas ---
+todas_datas = pd.concat([dados_indices[i] for i in indices_escolhidos]).index
+data_min = todas_datas.min().to_pydatetime()
+data_max = todas_datas.max().to_pydatetime()
+
+periodo = st.slider(
+    "Selecione o período de análise:",
+    min_value=data_min,
+    max_value=data_max,
+    value=(data_min, data_max),
+    format="MM/YYYY"
+)
+
+# --- Preparar dados para gráfico ---
+df_comb = pd.DataFrame()
+for nome in indices_escolhidos:
+    serie = dados_indices[nome].loc[periodo[0]:periodo[1]]
+    serie["Índice"] = nome
+    df_comb = pd.concat([df_comb, serie])
+
+# --- Normalizar as séries para comparação ---
+df_comb["valor_norm"] = df_comb.groupby("Índice")["valor"].apply(
+    lambda x: x / x.iloc[0]
+)
+
+# --- Gráfico de comparação ---
+st.subheader("📈 Evolução comparativa (valores normalizados)")
+chart = (
+    alt.Chart(df_comb.reset_index())
+    .mark_line()
+    .encode(
+        x=alt.X("DATE:T", title="Data"),
+        y=alt.Y("valor_norm:Q", title="Valor Normalizado"),
+        color="Índice:N",
+        tooltip=["DATE:T", "Índice:N", "valor:Q"]
+    )
+    .properties(height=400)
+)
+st.altair_chart(chart, use_container_width=True)
+
+# --- Estatísticas simples ---
+st.subheader("📊 Estatísticas do período selecionado")
+for nome in indices_escolhidos:
+    serie = dados_indices[nome].loc[periodo[0]:periodo[1]]
+    variacao = ((serie.iloc[-1]["valor"] / serie.iloc[0]["valor"]) - 1) * 100
+    st.metric(nome, f"{variacao:.2f}%", delta_color="inverse")
+
+# --- Mostrar dados brutos ---
+st.subheader("📑 Dados brutos")
+st.dataframe(df_comb.reset_index().rename(columns={"DATE": "Data"}))
+
+# ============================================================
+# 💰 CORREÇÃO MONETÁRIA (NOVA SEÇÃO)
+# ============================================================
+
+import ipeadatapy as ipea
+from datetime import datetime
+
+st.divider()
+st.header(":money_with_wings: Correção Monetária")
+
+# --- dicionário com os códigos do IPEA ---
+indices = {
+    "IPCA": "PRECOS12_IPCAG12",
+    "IGP-M": "IGP12_IGPMG12",
+    "IGP-DI": "IGP12_IGPDIG12",
+    "INPC": "PRECOS12_INPCBR12",
+    "IPC-FIPE": "FIPE12_FIPE0001",
+    "SELIC (Over)": "BM12_TJOVER12",
+}
+
+# --- cache dos dados para não recarregar sempre ---
+@st.cache_resource(show_spinner=False)
+def carregar_indices():
+    dados = {}
+    for nome, codigo in indices.items():
+        try:
+            dados[nome] = ipea.timeseries(codigo)
+        except Exception as e:
+            st.warning(f"Erro ao carregar {nome}: {e}")
+    return dados
+
+dados_indices = carregar_indices()
+
+# --- seleção de índice ---
+indice_escolhido = st.selectbox(
+    "Selecione o índice de correção:",
+    list(dados_indices.keys())
+)
+
+# --- entrada de dados ---
+col1, col2, col3 = st.columns(3)
+with col1:
+    data_inicial = st.text_input("Data inicial (AAAA-MM ou MM-AAAA):")
+with col2:
+    data_final = st.text_input("Data final (AAAA-MM ou MM-AAAA):")
+with col3:
+    valor = st.number_input("Valor a corrigir (R$):", min_value=0.0, format="%.2f")
+
+# --- função auxiliar para interpretar data ---
+def parse_data(data_str):
+    data_str = data_str.strip()
     try:
-        data_inicial = parse_data(data_inicial_str)
-        data_final = parse_data(data_final_str)
+        if "-" in data_str:
+            partes = data_str.split("-")
+            if len(partes[0]) == 4:  # formato AAAA-MM
+                return datetime.strptime(data_str, "%Y-%m")
+            else:  # formato MM-AAAA
+                return datetime.strptime(data_str, "%m-%Y")
+    except Exception:
+        st.error("⚠️ Formato inválido. Use AAAA-MM ou MM-AAAA.")
+        return None
 
-        st.subheader("Buscando dados...")
-        ipca = ipea.timeseries("PRECOS12_IPCAG12")
+# --- botão para calcular ---
+if st.button("Calcular correção"):
+    if not (data_inicial and data_final and valor > 0):
+        st.warning("Por favor, preencha todas as informações.")
+        st.stop()
 
-        st.subheader("Resultados:")
+    inicio = parse_data(data_inicial)
+    fim = parse_data(data_final)
 
-        # Filtro de período
-        inicio = min(data_inicial, data_final)
-        fim = max(data_inicial, data_final)
-        periodo = ipca.loc[inicio.strftime("%Y-%m"):fim.strftime("%Y-%m"), "VALUE ((% a.m.))"]
+    if not (inicio and fim):
+        st.stop()
 
-        if data_inicial < data_final:  # Inflação
-            nome_moeda, _, fator_conversao = obter_conversoes(data_inicial)
+    if indice_escolhido not in dados_indices:
+        st.error("Índice inválido.")
+        st.stop()
 
-            st.write(f"Correção de {nome_moeda} para Real (Inflação)")
-            st.write("Fator de correção acumulado (mensal):")
-            fator = inflacao(periodo, st.write)
-            valor_inflacao = (fator - 1) * 100
-            valor_corrigido = valor * fator * fator_conversao
+    serie = dados_indices[indice_escolhido].copy()
+    serie = serie.rename(columns={"VALUE ((% a.m.))": "valor"})
+    serie.index = pd.to_datetime(serie.index)
 
-            st.write(f"Fator acumulado no período: {round(fator, 6)}")
-            st.write(f"Inflação no período foi de: {round(valor_inflacao, 3)}%")
-            st.write(f"Valor nominal: {nome_moeda} {valor}")
-            st.metric("Valor corrigido", f"R$ {round(valor_corrigido, 2)}")
+    inicio, fim = sorted([inicio, fim])
 
-        else:  # Deflação
-            nome_moeda, fator_conversao, _ = obter_conversoes(data_final)
-            valor_data_final_ipca = ipca.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"]
-            
-            st.write(f"Correção de Real para {nome_moeda} (Deflação)")
-            st.write("Fator de deflação acumulado (mensal):")
-            fator = deflacao(periodo, valor_data_final_ipca, st.write)
-            valor_deflacao = (1 - fator) * 100
-            valor_corrigido = valor * fator * fator_conversao
+    serie_filtrada = serie.loc[inicio.strftime("%Y-%m"):fim.strftime("%Y-%m")]
 
-            st.write(f"Fator deflacionado no periodo: {round(fator, 6)}")
-            st.write(f"Deflação no período foi de: {round(valor_deflacao, 3)}%")
-            st.write(f"Valor nominal: R$ {valor}")
-            st.metric("Valor deflacionado", f"{nome_moeda} {round(valor_corrigido, 2)}")
+    if serie_filtrada.empty:
+        st.error("Nenhum dado encontrado nesse intervalo.")
+        st.stop()
 
-        # Gráfico (sempre exibe no final do script)
-        fig, ax = plt.subplots(figsize=(10, 5))
-        ax.plot(periodo.index, periodo.values)
-        ax.set_title("Variação Mensal do IPCA (%)")
-        ax.set_xlabel("Período")
-        ax.set_ylabel("Variação (%)")
-        ax.grid(True)
-        st.pyplot(fig)
+    # cálculo do fator acumulado
+    fator = (1 + serie_filtrada["valor"] / 100).prod()
+    valor_corrigido = valor * fator
 
-    except ValueError as e:
-        st.error(str(e))
-    except KeyError as e:
-        st.error(f"Erro: Uma das datas está fora do período da série do IPCA. Por favor, ajuste as datas.")
+    # resultado
+    st.success(f"Valor corrigido de **R$ {valor:,.2f}** para **R$ {valor_corrigido:,.2f}**")
+    st.write(f"Variação acumulada: **{(fator - 1) * 100:.2f}%** no período.")
+
+    # gráfico com Altair
+    graf = (
+        alt.Chart(serie_filtrada.reset_index())
+        .mark_line()
+        .encode(
+            x=alt.X("DATE:T", title="Período"),
+            y=alt.Y("valor:Q", title=f"Variação mensal (%) - {indice_escolhido}"),
+            tooltip=["DATE", "valor"]
+        )
+        .properties(title=f"Variação mensal do {indice_escolhido}", height=400)
+    )
+    st.altair_chart(graf, use_container_width=True)

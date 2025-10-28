@@ -2,7 +2,6 @@
 import ipeadatapy as ipea
 import pandas as pd
 import matplotlib.pyplot as plt
-import streamlit as st
 from datetime import datetime
 
 # --- Premissas para correção monetária considerando as datas ---
@@ -64,11 +63,44 @@ def deflacao(periodo, valor_data_inicial):
 
 
 # --- código principal ---
-IPCA = ipea.timeseries("PRECOS12_IPCAG12")
 
-# datas válidas na série do IPCA
-data_inicial_valida = min(IPCA.index).strftime("%m-%Y")
-data_final_valida = max(IPCA.index).strftime("%m-%Y")
+# criando um dicionário de índices de correção monetária
+indices = {
+    "IPCA": "PRECOS12_IPCAG12",
+    "IGP_M": "IGP12_IGPMG12",
+    "IPG_DI": "IGP12_IGPDIG12",
+    "SELIC_OVER": "BM12_TJOVER12",
+    "INPC": "PRECOS12_INPCBR12",
+    "IPC_BR": "IGP12_IPCG12",
+    "IPC_FIPE": "FIPE12_FIPE0001"
+}
+
+# criando um dicionário para amarzenar os dataframe de cada índice inflacionário
+dados_indices = {}
+
+for nome, codigo in indices.items():
+    dados_indices[nome] = ipea.timeseries(codigo)
+    print(f"{nome} carregado com sucesso")
+
+# escolhendo o índice inflacionário
+print(f"\nÍndices disponíveis:")
+for nome in dados_indices.keys():
+    print(nome)
+
+indice_escolhido = input("\nDigite o nome do índice inflacionário que deseja usar:").strip().upper()
+
+if indice_escolhido not in dados_indices:
+    print("Índice inválido, tente novamente.")
+    exit()
+
+# seleciona o índice escolhido
+indice_df = dados_indices[indice_escolhido]
+
+# IPCA = ipea.timeseries("PRECOS12_IPCAG12") # teste com ipca
+
+# datas válidas na série do índice escolhido
+data_inicial_valida = min(indice_df.index).strftime("%m-%Y")
+data_final_valida = max(indice_df.index).strftime("%m-%Y")
 
 # pedir datas ao usuário
 data_inicial = parse_data(input("Digite a data inicial (AAAA-MM ou MM-AAAA): "))
@@ -82,12 +114,12 @@ inicio = min(data_inicial, data_final)
 fim = max(data_inicial, data_final)
 
 # filtrar período (convertendo datetime para string ano-mês)
-periodo = IPCA.loc[inicio.strftime("%Y-%m"):fim.strftime("%Y-%m"), "VALUE ((% a.m.))"]
+periodo = indice_df.loc[inicio.strftime("%Y-%m"):fim.strftime("%Y-%m"), "VALUE ((% a.m.))"]
 
 # condições para as correções monetárias
-if not (data_inicial in IPCA.index and data_final in IPCA.index):
+if data_inicial not in indice_df.index or data_final not in indice_df.index:
     print(
-        f"As datas digitadas não estão no período do índice IPCA."
+        f"As datas digitadas não estão no período do {indice_escolhido}."
         f"\nUtilize as datas entre {data_inicial_valida} até {data_final_valida}."
         f"\nObrigado. Vai corinthians!"
     )
@@ -158,7 +190,7 @@ elif data_inicial < data_final and data_inicial >= data_corte_cruzeiroreal: # ap
         f"\nValor corrigido: R$ {round(valor_corrigido, 2)}"
     )
 elif data_inicial > data_final and data_final < data_corte_cruzeiro: # real para cruzeiro
-    valor_data_inicial = IPCA.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
+    valor_data_inicial = indice_df.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
     fator_inicial_deflacao = (1 + valor_data_inicial/100)
     print(f"Fator deflator inicial = {fator_inicial_deflacao:.6f}")
     fator = deflacao(periodo, valor_data_inicial)
@@ -171,7 +203,7 @@ elif data_inicial > data_final and data_final < data_corte_cruzeiro: # real para
         f"\nValor deflacionado: Cr$ {round(valor_corrigido, 2)}"
     )
 elif data_inicial > data_final and data_final < data_corte_cruzado: # real para cruzado
-    valor_data_inicial = IPCA.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
+    valor_data_inicial = indice_df.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
     fator_inicial_deflacao = (1 + valor_data_inicial/100)
     print(f"Fator deflator inicial = {fator_inicial_deflacao:.6f}")
     fator = deflacao(periodo, valor_data_inicial)
@@ -184,7 +216,7 @@ elif data_inicial > data_final and data_final < data_corte_cruzado: # real para 
         f"\nValor deflacionado: Cz$ {round(valor_corrigido, 2)}"
     )
 elif data_inicial > data_final and data_final < data_corte_cruzadonovo: # real para cruzado novo
-    valor_data_inicial = IPCA.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
+    valor_data_inicial = indice_df.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
     fator_inicial_deflacao = (1 + valor_data_inicial/100)
     print(f"Fator deflator inicial = {fator_inicial_deflacao:.6f}")
     fator = deflacao(periodo, valor_data_inicial)
@@ -197,7 +229,7 @@ elif data_inicial > data_final and data_final < data_corte_cruzadonovo: # real p
         f"\nValor deflacionado: NCz$ {round(valor_corrigido, 2)}"
     )
 elif data_inicial > data_final and data_final < data_corte_cruzeiro2: # real para volta do cruzeiro
-    valor_data_inicial = IPCA.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
+    valor_data_inicial = indice_df.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
     fator_inicial_deflacao = (1 + valor_data_inicial/100)
     print(f"Fator deflator inicial = {fator_inicial_deflacao:.6f}")
     fator = deflacao(periodo, valor_data_inicial)
@@ -210,7 +242,7 @@ elif data_inicial > data_final and data_final < data_corte_cruzeiro2: # real par
         f"\nValor deflacionado: Cr$ {round(valor_corrigido, 2)}"
     )
 elif data_inicial > data_final and data_final < data_corte_cruzeiroreal: # real para cruzeiro real
-    valor_data_inicial = IPCA.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
+    valor_data_inicial = indice_df.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
     fator_inicial_deflacao = (1 + valor_data_inicial/100)
     print(f"Fator deflator inicial = {fator_inicial_deflacao:.6f}")
     fator = deflacao(periodo, valor_data_inicial)
@@ -223,7 +255,7 @@ elif data_inicial > data_final and data_final < data_corte_cruzeiroreal: # real 
         f"\nValor deflacionado: Cr$ {round(valor_corrigido, 2)}"
     )
 elif data_inicial > data_final and data_final >= data_corte_cruzeiroreal: # apenas correção monetária em real considerando a deflação
-    valor_data_inicial = IPCA.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
+    valor_data_inicial = indice_df.loc[data_final.strftime("%Y-%m"), "VALUE ((% a.m.))"].values[0] # como a data final é menor que a data inicial, para fazer o cálculo do fator acumulado na função deflação é necessário utilizar a data final como valor da data inicial
     fator_inicial_deflacao = (1 + valor_data_inicial/100)
     print(f"Fator deflator inicial = {fator_inicial_deflacao:.6f}")
     fator = deflacao(periodo, valor_data_inicial)
@@ -239,7 +271,7 @@ else:
     print(
         "As datas informadas não se enquadram em nenhum cenário de "
         "conversão ou correção monetária previsto.\n"
-        f"Período disponível no IPCA: {data_inicial_valida} a {data_final_valida}.\n"
+        f"Período disponível para {indice_escolhido}: {data_inicial_valida} a {data_final_valida}.\n"
         "Verifique se:\n"
         " • As datas estão no formato AAAA-MM ou MM-AAAA.\n"
         " • A data inicial e a final estão corretas"
@@ -252,7 +284,7 @@ else:
 # --- Gráfico ---
 plt.figure(figsize=(10,5))
 plt.plot(periodo.index, periodo.values)
-plt.title("Variação Mensal do IPCA (%)")
+plt.title(f"Variação Mensal {indice_escolhido} (%)")
 plt.xlabel("Período")
 plt.ylabel("Variação (%)")
 plt.grid(True)
