@@ -5,3 +5,4 @@ plotly
 shinywidgets
 faicons
 openpyxl
+matplotlib
