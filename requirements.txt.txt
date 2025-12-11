@@ -1,0 +1,7 @@
+shiny
+pandas
+ipeadatapy
+plotly
+shinywidgets
+faicons
+openpyxl
